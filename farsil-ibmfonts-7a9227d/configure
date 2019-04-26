@@ -1,0 +1,129 @@
+#!/bin/sh
+
+check_existence() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo 'error: '"$1"' not found'
+        ERROR=1
+    }
+}
+
+check_existence install
+check_existence bdf2pcf
+check_existence gzip
+check_existence rm
+
+[ -n "$ERROR" ] && exit 1;
+
+PREFIX="/usr/local"
+SRCDIR=""
+OBJDIR=""
+INSTALLDIR=""
+MAKEVAR="gnu"
+
+eval set -- "`getopt -o p:i:o:s:b --long prefix:,objdir:,srcdir:,installdir:,bsd-make -n "$0" -- "$@"`"
+
+while true ; do
+    case "$1" in
+        -p|--prefix)
+            PREFIX="$2"; shift 2 ;;
+        -o|--objdir)
+            OBJDIR="$2"; shift 2 ;;
+        -s|--srcdir)
+            SRCDIR="$2"; shift 2 ;;
+        -b|--bsd-make)
+            MAKEVAR="bsd"; shift ;;
+        -i|--installdir)
+            INSTALLDIR="$2"; shift 2 ;;
+        --)
+            shift; break ;;
+        *)
+            exit 1 ;;
+    esac
+done
+
+if [ "$MAKEVAR" = bsd ]; then
+    CURDIR="\$(.CURDIR)"
+    SHELLDECL=".SHELL: name=sh path=/bin/sh"
+    SRCDECL=".PATH.bdf: \$(srcdir)"
+    BUILDRULE=".bdf.pcf.gz:"
+    COMPILED="\$(PCF)"
+    INSTALLED="\$(PCF:@.FILE.@\$(DESTDIR)\$(installdir)/\$(.FILE.)@)"
+
+    setobjdecl() { OBJDECL=".OBJDIR: \$(objdir:U$1)"; }
+else
+    CURDIR="\$(CURDIR)"
+    SHELLDECL="SHELL = /bin/sh"
+    SRCDECL="vpath %.bdf \$(srcdir)"
+    BUILDRULE="\$(objdir)/%.pcf.gz: %.bdf"
+    COMPILED="\$(addprefix \$(objdir)/, \$(PCF))"
+    INSTALLED="\$(addprefix \$(DESTDIR)\$(installdir)/, \$(PCF))"
+
+    setobjdecl() { OBJDECL="objdir = $1"; }
+fi
+
+case "$SRCDIR" in
+	'') SRCDIR="$CURDIR/bdf" ;;
+	/*) ;;
+	*)  SRCDIR="\$(prefix)/src/$SRCDIR" ;;
+esac
+
+case "$OBJDIR" in
+	'') mkdir -p `pwd`/pcf
+        OBJDIR="$CURDIR/pcf"
+        ;;
+	/*) mkdir -p "$OBJDIR"
+        ;;
+	*)  mkdir -p "$PREFIX/obj/$OBJDIR"
+        OBJDIR="\$(prefix)/obj/$OBJDIR"
+        ;;
+esac
+
+setobjdecl "$OBJDIR"
+
+case "$INSTALLDIR" in
+	'') INSTALLDIR="\$(fontdir)/misc" ;;
+	/*) ;;
+	*)  INSTALLDIR="\$(fontdir)/$INSTALLDIR" ;;
+esac
+
+cat << EOF > Makefile
+$SHELLDECL
+
+.PHONY: all clean install uninstall
+.SUFFIXES:
+.SUFFIXES: .bdf .pcf.gz
+
+prefix = $PREFIX
+srcdir = $SRCDIR
+datarootdir = \$(prefix)/share
+fontdir = \$(datarootdir)/fonts
+installdir = $INSTALLDIR
+
+$SRCDECL
+$OBJDECL
+
+PCF = ib16x16u.pcf.gz ib16x8u.pcf.gz ib8x16u.pcf.gz ib8x8u.pcf.gz \\
+      ic16x16u.pcf.gz ic8x16u.pcf.gz ic8x8u.pcf.gz icl16x16u.pcf.gz \\
+      icl8x16u.pcf.gz icl8x8u.pcf.gz ie16x14u.pcf.gz ie18x14u.pcf.gz \\
+      ie8x14u.pcf.gz ie9x14u.pcf.gz im9x14u.pcf.gz iv16x16u.pcf.gz \\
+      iv18x16u.pcf.gz iv8x16u.pcf.gz iv9x16u.pcf.gz
+
+COMPILED = $COMPILED
+INSTALLED = $INSTALLED
+
+all: \$(COMPILED)
+
+clean:
+	rm -f \$(COMPILED)
+
+install: all
+	install -dm755 \$(DESTDIR)\$(installdir)
+	install -D -m 644 -t \$(DESTDIR)\$(installdir) \$(COMPILED)
+
+uninstall:
+	rm -f \$(INSTALLED)
+
+$BUILDRULE
+	bdftopcf \$< | gzip > \$@
+
+EOF
